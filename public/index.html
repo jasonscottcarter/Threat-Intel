@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Threat Intel Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; min-height: 100vh; padding: 40px 20px; }
+    h1 { text-align: center; font-size: 1.6rem; color: #58a6ff; margin-bottom: 8px; letter-spacing: 1px; }
+    .subtitle { text-align: center; color: #8b949e; font-size: 0.85rem; margin-bottom: 30px; }
+    .search-box { display: flex; gap: 10px; max-width: 700px; margin: 0 auto 30px; }
+    input { flex: 1; padding: 12px 16px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 1rem; outline: none; transition: border-color 0.2s; }
+    input:focus { border-color: #58a6ff; }
+    button { padding: 12px 24px; background: #238636; border: none; border-radius: 8px; color: #fff; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #2ea043; }
+    button:disabled { background: #3d4451; cursor: not-allowed; }
+    .type-badge { text-align: center; margin-bottom: 20px; min-height: 24px; }
+    .badge { display: inline-block; padding: 3px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .badge-ip { background: #1f4068; color: #58a6ff; }
+    .badge-domain { background: #2d3a1e; color: #56d364; }
+    .badge-url { background: #3a2d1e; color: #e3b341; }
+    .badge-hash { background: #3a1e2d; color: #f778ba; }
+    .spinner { text-align: center; color: #8b949e; font-size: 0.9rem; padding: 40px; }
+    .results { max-width: 700px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .card-title { font-weight: 700; font-size: 1rem; color: #58a6ff; }
+    .verdict-clean { color: #56d364; font-weight: 700; }
+    .verdict-malicious { color: #f85149; font-weight: 700; }
+    .verdict-suspicious { color: #e3b341; font-weight: 700; }
+    .detection-bar { background: #21262d; border-radius: 6px; height: 10px; margin: 10px 0; overflow: hidden; }
+    .detection-fill { height: 100%; border-radius: 6px; transition: width 0.6s ease; }
+    .fill-clean { background: #56d364; }
+    .fill-malicious { background: #f85149; }
+    .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 12px; }
+    .stat-box { background: #21262d; border-radius: 6px; padding: 10px; text-align: center; }
+    .stat-value { font-size: 1.4rem; font-weight: 700; }
+    .stat-label { font-size: 0.7rem; color: #8b949e; margin-top: 2px; text-transform: uppercase; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .info-row { display: flex; flex-direction: column; background: #21262d; border-radius: 6px; padding: 8px 12px; }
+    .info-label { font-size: 0.7rem; color: #8b949e; text-transform: uppercase; margin-bottom: 2px; }
+    .info-value { font-size: 0.9rem; color: #e6edf3; word-break: break-all; }
+    .error-card { color: #f85149; font-size: 0.9rem; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .meta { font-size: 0.78rem; color: #8b949e; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>🛡️ Threat Intel Dashboard</h1>
+  <p class="subtitle">Paste any IP, domain, URL, or file hash</p>
+
+  <div class="search-box">
+    <input type="text" id="indicator" placeholder="e.g. 8.8.8.8 · google.com · https://... · sha256hash" />
+    <button id="lookupBtn" onclick="lookup()">Lookup</button>
+  </div>
+
+  <div class="type-badge" id="typeBadge"></div>
+  <div id="results"></div>
+
+  <script>
+    const input = document.getElementById('indicator');
+    const badge = document.getElementById('typeBadge');
+
+    function detectType(val) {
+      if (/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) return 'ip';
+      if (/^[a-fA-F0-9]{32}$|^[a-fA-F0-9]{40}$|^[a-fA-F0-9]{64}$/.test(val)) return 'hash';
+      if (/^https?:\/\/.+/.test(val)) return 'url';
+      if (val.length > 0) return 'domain';
+      return null;
+    }
+
+    input.addEventListener('input', () => {
+      const type = detectType(input.value.trim());
+      badge.innerHTML = type
+        ? `<span class="badge badge-${type}">Detected: ${type}</span>` : '';
+    });
+
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+
+    async function lookup() {
+      const indicator = input.value.trim();
+      if (!indicator) return;
+      const btn = document.getElementById('lookupBtn');
+      const results = document.getElementById('results');
+      btn.disabled = true;
+      results.innerHTML = '<div class="spinner">⏳ Querying threat intel sources...</div>';
+
+      try {
+        const res = await fetch('/lookup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ indicator })
+        });
+        const data = await res.json();
+        renderResults(data);
+      } catch (err) {
+        results.innerHTML = `<div class="card error-card">Error: ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderResults(data) {
+      const results = document.getElementById('results');
+      results.innerHTML = `<div class="results">${data.sources.map(s => renderCard(s, data.type)).join('')}</div>`;
+    }
+
+    function renderCard(source, type) {
+      if (source.error) return `
+        <div class="card">
+          <div class="card-header"><span class="card-title">${source.source}</span></div>
+          <div class="error-card">⚠️ ${source.error}</div>
+        </div>`;
+
+      if (source.source === 'VirusTotal') return renderVTCard(source);
+      if (source.source === 'IPinfo') return renderIPInfoCard(source);
+      if (source.source === 'URLscan.io') return renderURLScanCard(source);
+      return '';
+    }
+
+    function renderVTCard(s) {
+      const pct = s.total > 0 ? Math.round((s.malicious / s.total) * 100) : 0;
+      const verdictClass = s.malicious > 0 ? 'verdict-malicious' : s.suspicious > 0 ? 'verdict-suspicious' : 'verdict-clean';
+      const verdictText = s.malicious > 0 ? `⛔ Malicious` : s.suspicious > 0 ? `⚠️ Suspicious` : `✅ Clean`;
+      const fillClass = s.malicious > 0 ? 'fill-malicious' : 'fill-clean';
+      return `
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">VirusTotal</span>
+            <span class="${verdictClass}">${verdictText}</span>
+          </div>
+          <div class="detection-bar"><div class="detection-fill ${fillClass}" style="width:${pct}%"></div></div>
+          <div class="stat-grid">
+            <div class="stat-box"><div class="stat-value verdict-malicious">${s.malicious}</div><div class="stat-label">Malicious</div></div>
+            <div class="stat-box"><div class="stat-value verdict-suspicious">${s.suspicious}</div><div class="stat-label">Suspicious</div></div>
+            <div class="stat-box"><div class="stat-value verdict-clean">${s.clean}</div><div class="stat-label">Clean</div></div>
+          </div>
+          <p class="meta">
+            ${s.country ? `🌍 ${s.country} &nbsp;` : ''}
+            ${s.asOwner ? `🏢 ${s.asOwner} &nbsp;` : ''}
+            ${s.reputation !== undefined ? `📊 Reputation: ${s.reputation}` : ''}
+            ${s.lastAnalysis !== 'N/A' ? `<br>Last scanned: ${s.lastAnalysis}` : ''}
+          </p>
+        </div>`;
+    }
+
+    function renderIPInfoCard(s) {
+      if (s.message) return `<div class="card"><div class="card-header"><span class="card-title">IPinfo</span></div><p>${s.message}</p></div>`;
+      const fields = [
+        ['Hostname', s.hostname], ['City', s.city], ['Region', s.region],
+        ['Country', s.country], ['Org / ASN', s.org], ['Coordinates', s.loc], ['Timezone', s.timezone]
+      ].filter(([, v]) => v);
+      return `
+        <div class="card">
+          <div class="card-header"><span class="card-title">IPinfo — Geolocation & ASN</span></div>
+          <div class="info-grid">
+            ${fields.map(([label, value]) => `
+              <div class="info-row">
+                <span class="info-label">${label}</span>
+                <span class="info-value">${value}</span>
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }
+
+    function renderURLScanCard(s) {
+      if (s.message) return `<div class="card"><div class="card-header"><span class="card-title">URLscan.io</span></div><p style="color:#8b949e">${s.message}</p></div>`;
+      const verdictClass = s.verdict === 'Malicious' ? 'verdict-malicious' : 'verdict-clean';
+      return `
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">URLscan.io</span>
+            <span class="${verdictClass}">${s.verdict === 'Malicious' ? '⛔' : '✅'} ${s.verdict}</span>
+          </div>
+          <div class="info-grid">
+            <div class="info-row"><span class="info-label">Prior Scans Found</span><span class="info-value">${s.totalScans}</span></div>
+            <div class="info-row"><span class="info-label">Risk Score</span><span class="info-value">${s.score ?? 'N/A'}</span></div>
+            <div class="info-row"><span class="info-label">Latest Scan</span><span class="info-value">${s.latestScan ? new Date(s.latestScan).toLocaleString() : 'N/A'}</span></div>
+            <div class="info-row"><span class="info-label">Full Report</span><span class="info-value"><a href="${s.resultURL}" target="_blank">View on URLscan.io ↗</a></span></div>
+          </div>
+        </div>`;
+    }
+  </script>
+</body>
+</html>
