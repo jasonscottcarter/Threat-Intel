@@ -108,7 +108,7 @@ threat-intel/
 
 ## Built with
 
-Node.js, Express, Axios, dotenv, and vanilla JavaScript.
+Node.js, Express, Axios, dotenv, and vanilla JavaScript. Happy threat hunting.
 
 ## License
 
