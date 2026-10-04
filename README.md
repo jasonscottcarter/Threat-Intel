@@ -112,4 +112,4 @@ Node.js, Express, Axios, dotenv, and vanilla JavaScript.
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
